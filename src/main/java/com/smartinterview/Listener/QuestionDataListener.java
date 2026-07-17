@@ -5,12 +5,15 @@ import cn.hutool.core.bean.BeanUtil;
 import com.alibaba.excel.EasyExcel;
 import com.alibaba.excel.context.AnalysisContext;
 import com.alibaba.excel.event.AnalysisEventListener;
+import com.smartinterview.common.exception.ElasticSearchException;
 import com.smartinterview.dto.QuestionImportDTO;
 import com.smartinterview.entity.SysQuestion;
 import com.smartinterview.service.SysQuestionService;
+import org.elasticsearch.ElasticsearchCorruptionException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -27,8 +30,11 @@ public class QuestionDataListener extends AnalysisEventListener<QuestionImportDT
         SysQuestion question=new SysQuestion();
         BeanUtil.copyProperties(data,question);
         questionList.add(question);
+        //实时判断 ，元素大于=100就入库
         if(questionList.size()>=100){
             questionService.saveBatch(questionList);
+            // 2. 将带有 ID 的数据同步写入 ES 索引
+            questionService.syncToEsBatch(questionList);
             questionList.clear();
         }
     }
@@ -37,6 +43,8 @@ public class QuestionDataListener extends AnalysisEventListener<QuestionImportDT
         if(!questionList.isEmpty()){
             questionService.saveBatch(questionList);
         }
+            questionService.syncToEsBatch(questionList);
+
     }
 
 

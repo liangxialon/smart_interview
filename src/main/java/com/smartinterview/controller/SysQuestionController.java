@@ -7,10 +7,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.alibaba.excel.EasyExcel;
@@ -41,9 +38,11 @@ public class SysQuestionController {
      * 实现思路：导入题目时 → 调通义千问 Embedding API → 得到向量 → 存 MySQL(JSON)
      * 查询时     → 查询文本转向量 → 从 MySQL 取所有向量 → Java 计算余弦相似度 → 返回最相似题目
      */
+
     @AdminRequired
     @Operation(summary = "导入题库 Excel")
-    @PostMapping("/import/{file}")
+    @PostMapping("/import")
+    //requestparam传的是文件时，是放在放在请求体里的，字符串是在路径后面 requestbody只能传json
     public Result importQuestion(@RequestParam("file") MultipartFile file) {
         if (file.isEmpty()) {
             return Result.error("文件不能为空");
@@ -56,7 +55,7 @@ public class SysQuestionController {
             ).sheet().doRead();//读取第一个sheet，开始执行
 
             // 导入完成后异步为新题目生成向量
-            sysQuestionServiceImpl.batchGenerateEmbedding();
+            //sysQuestionServiceImpl.batchGenerateEmbedding();
 
             return Result.success("导入成功，正在后台生成向量索引，请等待约1分钟");
         } catch (Exception e) {
@@ -77,4 +76,11 @@ public class SysQuestionController {
         sysQuestionServiceImpl.batchGenerateEmbedding();
         return Result.success("已在后台启动向量生成任务，请查看日志进度");
     }
+    @Operation(summary="测试es查询")
+    @GetMapping("/elasticsearch")
+    public Result testEs(@RequestParam("question")String question){
+        String s = sysQuestionServiceImpl.searchStanderAnswer(question);
+        return Result.success(s);
+    }
+
 }

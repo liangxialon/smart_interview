@@ -143,10 +143,11 @@
             <artifactId>spring-boot-starter-amqp</artifactId>
         </dependency>
         <!--引入通义千问 SDK 依赖-->
+        <!-- ✅ 最新版本 -->
         <dependency>
             <groupId>com.alibaba</groupId>
             <artifactId>dashscope-sdk-java</artifactId>
-            <version>2.14.0</version>
+            <version>2.19.0</version>
         </dependency>
         <!-- EasyExcel 核心依赖（阿里官方） -->
         <dependency>
@@ -179,6 +180,12 @@
             <groupId>com.itextpdf</groupId>
             <artifactId>font-asian</artifactId>
             <version>7.2.5</version>
+        </dependency>
+        <!--es依赖-->
+        <dependency>
+            <groupId>org.elasticsearch.client</groupId>
+            <artifactId>elasticsearch-rest-high-level-client</artifactId>
+            <version>7.12.1</version>
         </dependency>
 
 

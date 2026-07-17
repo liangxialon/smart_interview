@@ -14,6 +14,9 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 
+/**
+ * 给用户回答打分
+ */
 @Component
 @Slf4j
 public class InterviewScoreListener {
@@ -24,6 +27,7 @@ public class InterviewScoreListener {
     @RabbitListener(queues= RabbitConstants.INTERVIEW_SCORE_QUEUE)
     public void handleQuestionScore(QuestionScoreMessage msg){
         try {
+            //调用AI进行评分
             String aiRaw=aiAnalysisService.evaluateAnswer(msg.getAiQuestion(),msg.getUserAnswer(),msg.getStandardAnswer());
             JSONObject json = JSONUtil.parseObj(aiRaw);
             //将报告保存到数据库

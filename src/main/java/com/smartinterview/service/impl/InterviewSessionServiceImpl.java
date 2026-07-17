@@ -113,7 +113,9 @@ public class InterviewSessionServiceImpl extends ServiceImpl<InterviewSessionMap
      */
     @Override
     public SseEmitter chat(ChatDTO dto) {
-        //获取上下文消息  系统提示词++历史会话+当前用户消息
+        //获取上下文消息  系统评分提示词++历史会话+当前用户消息
+        //todo
+        //先获取redis最后一条数据的AI问题ES匹配标准答案构建提示词，在添加的用户本次回答，跟AI下一次提问
         ChatContext chatContext = chatContextManager.buildChatContext(dto);
         List<Message> messages=chatContext.getMessages();
         //开始SSE
@@ -149,11 +151,11 @@ public class InterviewSessionServiceImpl extends ServiceImpl<InterviewSessionMap
                 },
                 ()->{
                     String aiFullResponse=aiResponseBuffer.toString();
-                    //AI上个问题添加到数据库
+                    //AI本次的问题添加到数据库
                     saveMessage(sessionId,Role.ASSISTANT.getValue(), aiFullResponse);
-                    //创建当前用户消息
+                    //创建当前用户消息存到redis
                     Message curUserMsg = Message.builder().role(Role.USER.getValue()).content(dto.getUserMessage()).build();
-                    //创建AI消息
+                    //创建AI消息存到redis
                     Message aiMessage=Message.builder().role(Role.ASSISTANT.getValue()).content(aiFullResponse).build();
                     //更新redis，进行滑动窗口裁剪
                     chatContextManager.updateContext(sessionId,curUserMsg,aiMessage);

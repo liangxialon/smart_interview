@@ -16,6 +16,7 @@ public class SmartInterviewApplication {
     public static void main(String[] args) {
         SpringApplication.run(SmartInterviewApplication.class, args);
     }
+    //rabbitmq解决乱码问题
     @Bean
     public MessageConverter messageConverter(){
         // 1.定义消息转换器

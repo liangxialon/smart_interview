@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -34,7 +35,7 @@ public class ChatContextManager {
     /**
      * 构建大模型所需的完整上下文消息列表
      */
-    public ChatContext buildChatContext(ChatDTO dto) {
+    public ChatContext buildChatContext(ChatDTO dto)  {
         Long sessionId = dto.getSessionId();
 
         // 1. 获取基础信息（Session、摘要等）
@@ -55,7 +56,7 @@ public class ChatContextManager {
         // 3. 提取上一轮 AI 问题并检索 RAG 标准答案
         String standerAnswer = null;
         if (!historyMessages.isEmpty()) {
-            //redis最后一条数据就是AI上个问题
+            //*****redis最后一条数据就是AI本次问题******
             Message lastMsg = historyMessages.get(historyMessages.size() - 1);
 
             if (Role.ASSISTANT.getValue().equals(lastMsg.getRole())) {
@@ -66,10 +67,10 @@ public class ChatContextManager {
 
         // 4. 构建 System Prompt
         String systemPrompt = promptManager.buildInterviewChatSystemPrompt(
-                summaryText,
-                standerAnswer,
-                session.getDifficulty(),
-                session.getJobIntention()
+                summaryText, //建立摘要
+                standerAnswer, //标准答案
+                session.getDifficulty(),  //难度
+                session.getJobIntention()  //求职意向
         );
 
         // 5. 组装最终的消息列表

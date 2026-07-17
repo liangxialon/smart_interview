@@ -47,7 +47,7 @@ public class MvcConfig implements WebMvcConfigurer {
                         "/user/code/login",
                         "/user/code",
                         "/user/password/login",
-                        "user/register"
+                        "/user/register"
                 )
                 .excludePathPatterns(SWAGGER_EXCLUDE_PATHS) // 追加放行文档路径
                 .order(1);

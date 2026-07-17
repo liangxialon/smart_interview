@@ -10,6 +10,7 @@ import com.smartinterview.entity.InterviewSession;
 import com.smartinterview.entity.QuestionVector;
 import com.smartinterview.service.InterviewSessionService;
 import com.smartinterview.service.impl.InterviewSessionServiceImpl;
+import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
@@ -23,20 +24,41 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import java.io.File;
 import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.function.Function;
 
 @SpringBootTest
 @Slf4j
 class SmartInterviewApplicationTests {
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
+    @Data
+    class Student{
+        private String name;
+        private int age;
+
+        public Student(String name, int age) {
+            this.name = name;
+            this.age = age;
+        }
+
+        public Student() {
+        }
+        public Student(String s){
+            this.name=s.split(",")[0];
+            this.age=Integer.parseInt(s.split(",")[1]);
+        }
+    }
 
     @Test
     void contextLoads() {
     }
-    @Test
-    void testException(){
-        throw new BaseException("测试异常");
-    }
+//    @Test
+//    void testException(){
+//        throw new BaseException("测试异常");
+//    }
     @Test
     public void testExtractTextFromPdf() {
         // 1. 找一个你电脑本地的 PDF 简历路径进行测试
@@ -74,14 +96,7 @@ class SmartInterviewApplicationTests {
             }
         }
     }
-    @Autowired
-    private RabbitTemplate rabbitTemplate;
-    @Test
-    public void testSendMessage(){
-        String que="simple.queue";
-        String msg="hello,amq";
-        rabbitTemplate.convertAndSend(que,msg);
-    }
+
     @Autowired
     private InterviewSessionServiceImpl interviewSessionService;
     @Test
@@ -111,6 +126,30 @@ class SmartInterviewApplicationTests {
         Message msg=JSONUtil.toBean(userMsg1,Message.class,false);
         System.out.println("userMsg1:"+msg.getContent());
     }
+    @Test
+    public void test3(){
+        List<String> list=new ArrayList();
+        Collections.addAll(list,"大明,10","韩梅梅,18","光龙,20");
+        //这三种方式都是为了实现函数式接口
+      //匿名内部类
+        list.stream().map(new Function<String,Student>(){
+            @Override
+            public Student apply(String o) {
+                String[] r = o.split(",");
+                String name=r[0];
+                int age=Integer.parseInt(r[1]);
+                return new Student(name,age);
+            }
+        }).forEach(s->System.out.println(s));
+        //lambda表达式  参数跟返回值也要跟抽象方法的形参跟返回值保持一至
+        list.stream().map(s-> new Student(
+                s.split(",")[0], Integer.parseInt(s.split(",")[1])
+                ))
+                .forEach(s->System.out.println(s));
 
+    //方法引用  被引用的方法形参跟返回值需要跟抽象方法的形参返回值一样
+    //引用类名：：方法名（静态）    对象名：：方法名 （别的类）   this::方法名(引用自己类的方法)    类名：：new（引用构造方法）
+    list.stream().map(Student::new).forEach(s->System.out.println(s));
+}
 
 }

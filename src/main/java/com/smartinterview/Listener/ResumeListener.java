@@ -14,6 +14,9 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 
+/**
+ * 给简历打分
+ */
 @Slf4j
 @Component
 public class ResumeListener {

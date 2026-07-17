@@ -72,7 +72,7 @@ public class AiAnalysisServiceImpl implements AiAnalysisService {
             throw new AiServiceException("AI 智能分析引擎开小差了，请稍后重试");
         }
     }
-    /**
+    /**mq中代码调用
      * 后台轨：同步调用，强制输出 JSON（评分 + 项目摘要 ）
      * 由 @Async 异步线程调用，不阻塞主流程
      *

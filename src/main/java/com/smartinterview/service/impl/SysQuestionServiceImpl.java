@@ -3,17 +3,33 @@ package com.smartinterview.service.impl;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.smartinterview.common.exception.ElasticSearchException;
 import com.smartinterview.entity.QuestionVector;
 import com.smartinterview.entity.SysQuestion;
 import com.smartinterview.mapper.SysQuestionMapper;
 import com.smartinterview.service.SysQuestionService;
 import lombok.extern.slf4j.Slf4j;
+import org.elasticsearch.action.bulk.BulkRequest;
+import org.elasticsearch.action.bulk.BulkResponse;
+import org.elasticsearch.action.index.IndexRequest;
+import org.elasticsearch.action.search.SearchRequest;
+import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.client.RequestOptions;
+import org.elasticsearch.client.RestHighLevelClient;
+import org.elasticsearch.common.xcontent.XContentType;
+import org.elasticsearch.index.query.BoolQueryBuilder;
+import org.elasticsearch.index.query.QueryBuilders;
+import org.elasticsearch.search.SearchHit;
+import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.PostConstruct;
+import java.io.IOException;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
@@ -29,6 +45,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
 @Slf4j
 public class SysQuestionServiceImpl extends ServiceImpl<SysQuestionMapper, SysQuestion>
         implements SysQuestionService {
+    @Autowired
+    private RestHighLevelClient client;
+    private static final String questionIndex="sys_question_index";
 
     @Autowired
     private EmbeddingServiceImpl embeddingService;
@@ -86,9 +105,8 @@ public class SysQuestionServiceImpl extends ServiceImpl<SysQuestionMapper, SysQu
      * 用向量相似度检索最匹配的标准答案
      * 替代原来的全文索引，解决语义不匹配问题
      *
-     * @param question  AI的问题（只传 AI 问题，不拼用户回答）
-     * @return 匹配的原题+标准答案，未匹配返回 null
-     */
+
+
     @Override
     public String searchStanderAnswer(String question) {
         if (StrUtil.isBlank(question)) {
@@ -135,6 +153,85 @@ public class SysQuestionServiceImpl extends ServiceImpl<SysQuestionMapper, SysQu
             log.error("向量检索异常，降级跳过", e);
             return null;
         }
+    }*/
+    public String searchStanderAnswer(String aiQuestion)  {
+        if(StrUtil.isBlank(aiQuestion)){
+            return null;
+        }
+        try {
+            //1.创建查询对象
+            BoolQueryBuilder boolQueryBuilder= QueryBuilders.boolQuery();
+            //添加条件
+            //should或者，两个条件满足任意一个就好，都满足的话 总分比较高，boost设置权重
+            boolQueryBuilder.should(QueryBuilders.matchQuery("question",aiQuestion)).boost(1.5f);
+            boolQueryBuilder.should(QueryBuilders.matchQuery("answer",aiQuestion)).boost(1f);
+            //至少匹配一个条件
+            boolQueryBuilder.minimumShouldMatch("1");
+            //只拉去一个standeranswer字段
+            //2.创建请求体
+            SearchSourceBuilder sourceBuilder=new SearchSourceBuilder();
+            sourceBuilder.query(boolQueryBuilder);
+            //只返回最匹配的结果
+            sourceBuilder.size(1);
+            //只返回answer字段
+            sourceBuilder.fetchSource("answer",null);
+            //创建请求对象
+            SearchRequest searchRequest=new SearchRequest(questionIndex);
+            searchRequest.source(sourceBuilder);
+            //3.发送请求执行查询
+            SearchResponse searchResponse=client.search(searchRequest, RequestOptions.DEFAULT);
+            //4.解析结果
+            SearchHit[] hits=searchResponse.getHits().getHits();
+            if(hits.length>0){
+                SearchHit topHit=hits[0];
+                String standerAnswer=(String) topHit.getSourceAsMap().get("answer");
+                return standerAnswer;
+            }
+        } catch (IOException e) {
+            throw new ElasticSearchException("ES 全文检索标准答案失败，准备降级为无答案处理");
+        }
+        return null;
+
+
+    }
+    /**
+     * 将题目批量同步到 Elasticsearch
+     * @param questions 题目列表
+     */
+    int i=1;
+    public void syncToEsBatch(List<SysQuestion> questions)  {
+        if(questions.isEmpty()||questions==null){
+            return ;
+        }
+
+        try {
+
+            //批量插入请求对象
+            BulkRequest bulkRequest=new BulkRequest();
+            for(SysQuestion q:questions){
+                //创建插入请求对象
+                IndexRequest indexRequest=new IndexRequest(questionIndex)
+                        .id(q.getId().toString());//添加文档id，就是每一行数据的id
+                Map<String,Object> map=new HashMap();
+                map.put("answer",q.getAnswer());
+                map.put("question",q.getQuestion());
+                indexRequest.source(map, XContentType.JSON);
+                bulkRequest.add(indexRequest);
+            }
+            //批量发送方请求插入
+            BulkResponse bulkResponse=client.bulk(bulkRequest,RequestOptions.DEFAULT);
+            if (bulkResponse.hasFailures()) {
+
+               // log.error("ES 题库批量同步部分失败: {}", bulkResponse.buildFailureMessage());
+                throw new ElasticSearchException("ES 题库批量同步部分失败");
+            } else {
+                log.info("第{}轮：成功同步 {} 条题库数据到 Elasticsearch",i++, questions.size());
+               // throw new ElasticSearchException("成功同步 题库数据到 Elasticsearch");
+            }
+        } catch (IOException e) {
+            throw new ElasticSearchException("ES 题库批量同步异常");
+        }
+
     }
 
     // ─────────────────────────────────────────────────────────
