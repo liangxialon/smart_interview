@@ -26,13 +26,17 @@ import java.util.stream.StreamSupport;
 @Slf4j
 public class EmbeddingServiceImpl implements EmbeddingService {
 
-    @Value("${aliyun.dashscope.api-key}")
+    @Value("${ai.api-key}")
     private String apiKey;
 
-    @Value("${aliyun.dashscope.embedding-url}")
-    private  String EMBEDDING_URL ;
-    @Value("${aliyun.dashscope.model}")
+    @Value("${ai.base-url}")
+    private String baseUrl;
+    @Value("${ai.embedding.model-name}")
     private String MODEL ;
+
+    private String getEmbeddingUrl() {
+        return baseUrl + "/embeddings";
+    }
 
     private final HttpClient httpClient = HttpClient.newHttpClient();
 
@@ -51,23 +55,18 @@ public class EmbeddingServiceImpl implements EmbeddingService {
             text = text.substring(0, 2000);
         }
         try {
-            // 构建请求体
+            // 构建请求体（OpenAI 兼容格式）
             JSONObject body = JSONUtil.createObj()
                     .set("model", MODEL)
-                    .set("input", JSONUtil.createObj()
-                            .set("texts", JSONUtil.createArray().set(text)))
-                    .set("parameters", JSONUtil.createObj()
-                            .set("text_type", "query"));
+                    .set("input", text);
 
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(EMBEDDING_URL))
+                    .uri(URI.create(getEmbeddingUrl()))
                     .header("Authorization", "Bearer " + apiKey)
                     .header("Content-Type", "application/json")
-                    //ofString负责将内存中的字符串转换为可以通过网络发送的字节流。
                     .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                     .build();
 
-            //将字节流转成string
             HttpResponse<String> response = httpClient.send(
                     request, HttpResponse.BodyHandlers.ofString());
 
@@ -76,12 +75,10 @@ public class EmbeddingServiceImpl implements EmbeddingService {
                 return null;
             }
 
-            // 解析响应
-            //将json串转成jsonObject对象
+            // 解析响应（OpenAI 兼容格式）
             JSONObject resp = JSONUtil.parseObj(response.body());
             JSONArray embedding = resp
-                    .getJSONObject("output")
-                    .getJSONArray("embeddings")
+                    .getJSONArray("data")
                     .getJSONObject(0)
                     .getJSONArray("embedding");
 

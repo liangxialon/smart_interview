@@ -23,16 +23,12 @@ public class PromptManager {
 
     @Value("classpath:prompts/resume-score-system.st")
     private Resource resumeScoreResource;
-    @Value("classpath:prompts/interview-chat-system.st")
-    private Resource interviewChatResource;
     @Value("classpath:prompts/evaluate-answer.st")
     private Resource evaluateAnswerResource;
-
 
     // 缓存在内存中的字符串，避免每次请求都去读文件
     private String resumeAnalysisTemplate;
     private String resumeScoreTemplate;
-    private String interviewChatTemplate;
     private String evaluateAnswerTemplate;
     /**
      * 项目启动时自动将文件内容加载到内存中
@@ -43,7 +39,6 @@ public class PromptManager {
             //将文件输入流读取成字符串，指定UTF-8编码
             resumeAnalysisTemplate = IoUtil.read(resumeAnalysisResource.getInputStream(), StandardCharsets.UTF_8);
             resumeScoreTemplate    = IoUtil.read(resumeScoreResource.getInputStream(), StandardCharsets.UTF_8);
-            interviewChatTemplate = IoUtil.read(interviewChatResource.getInputStream(), StandardCharsets.UTF_8);
             evaluateAnswerTemplate=IoUtil.read(evaluateAnswerResource.getInputStream(),StandardCharsets.UTF_8);
             log.info("AI Prompt 模板加载完成！");
         } catch (Exception e) {
@@ -61,34 +56,23 @@ public class PromptManager {
         return resumeScoreTemplate;
     }
 
-
-    /**
-     * 动态构建面试官提示词（替换占位符）
-     */
-    public String buildInterviewChatSystemPrompt(String summaryText,
-                                                 String ragContext,
-                                                 String difficulty,
-                                                 String jobIntention) {
-        String resumeSummary = summaryText != null ? summaryText : "暂无简历画像";
-
-        //查到标准答案就组装，没查到就留空
-        String ragPrompt= StrUtil.isNotBlank(ragContext) ?ragContext : "无标准答案，请依据业界最佳实践评判";
-        String difficultyPrompt = StrUtil.isNotBlank(difficulty) ? difficulty + "，提问深度、术语复杂度和追问力度必须严格匹配该级别。": "";
-       String intentionPrompt = StrUtil.isNotBlank(jobIntention) ?  jobIntention : "";
-
-
-        return interviewChatTemplate
-                .replace("{{summaryText}}", resumeSummary)
-                .replace("{{standardAnswer}}",ragPrompt)
-                .replace("{{difficultyContext}}",difficultyPrompt)
-                .replace("{{jobIntention}}",intentionPrompt);
-    }
     public String buildEvaluationPrompt(String aiQuestion,String userAnswer,String standardAnswer){
         String userAnswerFinal = StrUtil.isNotBlank(userAnswer) ? userAnswer : "（候选人未作答）";
         String stdAnswerFinal=StrUtil.isNotBlank(standardAnswer)?standardAnswer:"（无标准答案，请依据业界最佳实践评判）";
         return evaluateAnswerTemplate.replace("{{aiQuestion}}",aiQuestion)
                 .replace("{{userAnswer}}",userAnswerFinal)
                 .replace("{{stdPart}}",stdAnswerFinal);
+    }
+
+    /**
+     * 构建 @UserMessage 中的"之前的长期记忆"部分
+     * @param existingMemory 旧的长期记忆摘要（可为空）
+     */
+    public String buildExistingMemoryPart(String existingMemory) {
+        if (StrUtil.isBlank(existingMemory)) {
+            return "";
+        }
+        return "【之前的长期记忆】（请将以下内容与新对话合并，去重并更新）\n" + existingMemory + "\n\n";
     }
 
 }

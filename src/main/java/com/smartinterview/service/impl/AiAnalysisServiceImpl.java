@@ -73,15 +73,15 @@ public class AiAnalysisServiceImpl implements AiAnalysisService {
         }
     }
     /**mq中代码调用
-     * 后台轨：同步调用，强制输出 JSON（评分 + 项目摘要 ）
+     * 后台轨：同步调用，强制输出 JSON（评分）
      * 由 @Async 异步线程调用，不阻塞主流程
      *
      * @param rawText 简历原始文本
-     * @return 严格 JSON 字符串，格式：{"score":{...},"summary":"...","jobIntention":"..."}
+     * @return 严格 JSON 字符串，格式：{"score":{...}}
      */
     public String analyzeResumeScore(String rawText) {
         try {
-            //生成评分加项目摘要，直接返回字符串
+            //生成评分，直接返回字符串
             Generation gen = new Generation();
             Message systemMsg = Message.builder()
                     .role(Role.SYSTEM.getValue())
@@ -104,8 +104,7 @@ public class AiAnalysisServiceImpl implements AiAnalysisService {
         } catch (Exception e) {
             log.error("后台轨简历评分失败", e);
             // 返回降级默认值，不影响主流程
-            return "{\"score\":{\"total\":0,\"technical\":0,\"project\":0,\"clarity\":0,\"potential\":0}," +
-                    "\"summary\":\"暂无摘要\"}";
+            return "{\"score\":{\"total\":0,\"technical\":0,\"project\":0,\"clarity\":0,\"potential\":0}}";
         }
     }
 

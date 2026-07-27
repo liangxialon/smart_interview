@@ -70,10 +70,10 @@ public class InterviewSessionController {
     @PostMapping(value = "chat", produces = org.springframework.http.MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter chat(@RequestBody ChatDTO dto,
                            HttpServletResponse httpServletResponse) {
-        //设置服务端将响应的内容转为字节流时的格式
         httpServletResponse.setCharacterEncoding("UTF-8");
-        //告知客户端响应体的编码格式
         httpServletResponse.setContentType("text/event-stream;charset=UTF-8");
+        httpServletResponse.setHeader("Cache-Control", "no-cache");
+        httpServletResponse.setHeader("Connection", "keep-alive");
         return interviewSessionService.chat(dto);
 
     }

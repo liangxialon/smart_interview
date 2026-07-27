@@ -1,8 +1,6 @@
 package com.smartinterview.service.impl;
 
 import cn.hutool.core.util.StrUtil;
-import cn.hutool.json.JSONObject;
-import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.itextpdf.io.font.PdfEncodings;
@@ -20,21 +18,20 @@ import com.itextpdf.layout.element.*;
 import com.itextpdf.layout.properties.TextAlignment;
 import com.itextpdf.layout.properties.UnitValue;
 import com.smartinterview.common.exception.InterviewSessionException;
-import com.smartinterview.common.result.Result;
 import com.smartinterview.entity.InterviewReport;
 import com.smartinterview.entity.InterviewSession;
+import com.smartinterview.entity.InterviewWeaknessTraining;
 import com.smartinterview.mapper.InterviewReportMapper;
 import com.smartinterview.mapper.InterviewSessionMapper;
-import com.smartinterview.service.AiAnalysisService;
+import com.smartinterview.mapper.InterviewWeaknessTrainingMapper;
 import com.smartinterview.service.InterviewReportService;
-
-import com.smartinterview.service.InterviewSessionService;
+import com.smartinterview.service.InterviewWrongBookmarkService;
+import com.smartinterview.service.ai.WeaknessTrainingService;
 import com.smartinterview.vo.InterviewReportVO;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ClassPathResource;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StreamUtils;
 
@@ -43,64 +40,21 @@ import java.net.URLEncoder;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.InputStream;
 
 @Service
 @Slf4j
 public class InterviewReportServiceImpl extends ServiceImpl<InterviewReportMapper,InterviewReport>
         implements InterviewReportService {
     @Autowired
-    private AiAnalysisService aiAnalysisService;
-    @Autowired
     private InterviewSessionMapper interviewSessionMapper;
-
-    /**
-     * 生成报告对象，存到数据库
-     * @param sessionId
-     * @param messageId
-     * @param aiQuestion
-     * @param userAnswer
-     * @param standardAnswer
-     */
-    @Async
-    public void saveQuestionReport(Long sessionId,Long messageId,String aiQuestion,String userAnswer,String standardAnswer){
-        try {
-            //调用AI评分
-            String aiRaw=aiAnalysisService.evaluateAnswer(aiQuestion,userAnswer,standardAnswer);
-            log.info("AI单题评分结果：{}",aiRaw);
-            //解析json
-            int start=aiRaw.indexOf("{");
-            int end = aiRaw.lastIndexOf("}");
-            if(start==-1||end==-1){
-                log.error("AI评分返回格式异常");
-                return ;
-            }
-            //生成jsonObject对象，键值对格式的json串
-            JSONObject json= JSONUtil.parseObj(aiRaw.substring(start,end+1));
-            //将报告保存到数据库
-            InterviewReport interviewReport = InterviewReport.builder()
-                    .sessionId(sessionId)
-                    .messageId(messageId)
-                    .questionText(aiQuestion)
-                    .aiRaw(aiRaw)
-                    .userAnswer(userAnswer)
-                    .standardAnswer(standardAnswer)
-                    .score(json.getInt("score"))
-                    .isCorrect(json.getBool("isCorrect"))
-                    .comment(json.getStr("comment"))
-                    .createTime(LocalDateTime.now())
-                    .build();
-            save(interviewReport);
-            log.info("单体评分已保存,session={},score={}",sessionId,json.getInt("score"));
-        } catch (Exception e) {
-            log.error("saveQuestionReport 异常,sessionId={}",sessionId,e);
-        }
-
-
-    }
+    @Autowired
+    private WeaknessTrainingService weaknessTrainingService;
+    @Autowired
+    private InterviewWrongBookmarkService bookmarkService;
+    @Autowired
+    private InterviewWeaknessTrainingMapper weaknessTrainingMapper;
 
     /**
      * 生成完整报告，封装成VO返回
@@ -147,15 +101,32 @@ public class InterviewReportServiceImpl extends ServiceImpl<InterviewReportMappe
         interviewReportVO.setTotalScore(totalScore);
         interviewReportVO.setCorrectRate(correctRate);
         interviewReportVO.setCorrectCount((int)correctCount);
+        // 判断是否所有题目都已评分完成
+        boolean allScored = list.stream().noneMatch(r -> r.getScore() == null);
+        interviewReportVO.setScoringComplete(allScored);
+
+        // 评分全部完成后，回填totalScore到session表（供统计页使用）
+        if (allScored && session.getTotalScore() == null) {
+            session.setTotalScore(totalScore);
+            session.setUpdateTime(LocalDateTime.now());
+            interviewSessionMapper.updateById(session);
+        }
+
+        // 查询收藏状态
+        List<Long> reportIds = list.stream().map(InterviewReport::getId).collect(Collectors.toList());
+        Set<Long> bookmarkedIds = bookmarkService.getBookmarkedReportIds(reportIds);
+
         List<InterviewReportVO.QuestionReportItem> items=list.stream()
                 //将list集合中的元素经过转换规则转为另一种元素
                 .map(r->{
                     InterviewReportVO.QuestionReportItem item=new InterviewReportVO.QuestionReportItem();
+                    item.setQuestionReportId(r.getId());
                     item.setQuestionText(r.getQuestionText());
                     item.setComment(r.getComment());
                     item.setIsCorrect(r.getIsCorrect());
                     item.setUserAnswer(r.getUserAnswer());
                     item.setScore(r.getScore());
+                    item.setBookmarked(bookmarkedIds.contains(r.getId()));
                     return item;
                 }).collect(Collectors.toList());
         interviewReportVO.setItems(items);
@@ -361,6 +332,87 @@ public class InterviewReportServiceImpl extends ServiceImpl<InterviewReportMappe
 
     }
 
+
+    /**
+     * 薄弱项专项训练
+     * 查询本次面试中答错的题目，让AI判断薄弱领域并生成10道类似练习题
+     * 结果缓存到数据库，避免重复调用AI
+     */
+    @Override
+    public String generateWeaknessTraining(Long sessionId) {
+        // 1. 校验面试是否存在且已完成
+        InterviewSession session = interviewSessionMapper.selectById(sessionId);
+        if (session == null || session.getStatus() < 2) {
+            throw new InterviewSessionException("面试不存在或未完成");
+        }
+
+        // 2. 检查是否所有题目评分完成
+        LambdaQueryWrapper<InterviewReport> allWrapper = new LambdaQueryWrapper<>();
+        allWrapper.eq(InterviewReport::getSessionId, sessionId)
+                .ne(InterviewReport::getQuestionText, "");
+        List<InterviewReport> allReports = list(allWrapper);
+        boolean allScored = allReports.stream().noneMatch(r -> r.getScore() == null);
+        if (!allScored) {
+            return "{\"weaknessType\":\"评分进行中，请稍后再试\",\"questions\":[]}";
+        }
+
+        // 3. 查错题，无错题直接返回
+        LambdaQueryWrapper<InterviewReport> reportWrapper = new LambdaQueryWrapper<>();
+        reportWrapper.eq(InterviewReport::getSessionId, sessionId)
+                .eq(InterviewReport::getIsCorrect, false)
+                .ne(InterviewReport::getQuestionText, "");
+        List<InterviewReport> wrongReports = list(reportWrapper);
+
+        if (wrongReports.isEmpty()) {
+            return "{\"weaknessType\":\"暂无薄弱项\",\"questions\":[]}";
+        }
+
+        // 3. 有错题，查缓存
+        LambdaQueryWrapper<InterviewWeaknessTraining> cacheWrapper = new LambdaQueryWrapper<>();
+        cacheWrapper.eq(InterviewWeaknessTraining::getSessionId, sessionId)
+                .last("LIMIT 1");
+        InterviewWeaknessTraining cached = weaknessTrainingMapper.selectOne(cacheWrapper);
+        if (cached != null) {
+            log.info("薄弱项训练命中缓存，sessionId={}", sessionId);
+            return cached.getTrainingData();
+        }
+
+        // 4. 格式化错题列表
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < wrongReports.size(); i++) {
+            InterviewReport r = wrongReports.get(i);
+            sb.append(i + 1).append(". ").append(r.getQuestionText());
+            if (StrUtil.isNotBlank(r.getComment())) {
+                sb.append("（AI评价：").append(r.getComment()).append("）");
+            }
+            sb.append("\n");
+        }
+
+        log.info("薄弱项训练，sessionId={}，错题数量={}", sessionId, wrongReports.size());
+
+        // 5. 调用AI生成练习题
+        String result = weaknessTrainingService.generateTraining(sb.toString());
+
+        // 6. 解析weaknessType并缓存到数据库
+        String weaknessType = "未知领域";
+        try {
+            cn.hutool.json.JSONObject json = cn.hutool.json.JSONUtil.parseObj(result);
+            weaknessType = json.getStr("weaknessType", "未知领域");
+        } catch (Exception e) {
+            log.warn("解析weaknessType失败，sessionId={}", sessionId);
+        }
+
+        InterviewWeaknessTraining training = InterviewWeaknessTraining.builder()
+                .sessionId(sessionId)
+                .weaknessType(weaknessType)
+                .trainingData(result)
+                .createTime(LocalDateTime.now())
+                .build();
+        weaknessTrainingMapper.insert(training);
+        log.info("薄弱项训练结果已缓存，sessionId={}，weaknessType={}", sessionId, weaknessType);
+
+        return result;
+    }
 
     /**
      * 专门用于在 Spring Boot 环境下加载 TTC 字体

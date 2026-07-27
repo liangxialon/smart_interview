@@ -2,10 +2,7 @@ package com.smartinterview.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.StrUtil;
-import cn.hutool.json.JSONUtil;
-import com.alibaba.dashscope.aigc.generation.GenerationResult;
 import com.alibaba.dashscope.common.Message;
-
 import com.alibaba.dashscope.common.Role;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
@@ -16,8 +13,8 @@ import com.smartinterview.common.exception.InterviewSessionException;
 import com.smartinterview.common.exception.ResumeAnalysisException;
 import com.smartinterview.common.exception.ResumeNotFindException;
 import com.smartinterview.common.manager.ChatContextManager;
-import com.smartinterview.common.manager.PromptManager;
-import com.smartinterview.common.result.Result;
+import com.smartinterview.common.manager.RedisChatMemory;
+import com.smartinterview.common.manager.RedisChatMemoryProvider;
 import com.smartinterview.common.util.UserHolder;
 import com.smartinterview.dto.ChatDTO;
 import com.smartinterview.dto.StartInterviewDTO;
@@ -25,24 +22,23 @@ import com.smartinterview.entity.*;
 import com.smartinterview.mapper.ChatMessageMapper;
 import com.smartinterview.service.*;
 import com.smartinterview.mapper.InterviewSessionMapper;
+import com.smartinterview.service.ai.InterviewChatService;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import com.smartinterview.vo.InterviewSessionVO;
 import com.smartinterview.vo.InterviewStartVO;
 import com.smartinterview.vo.InterviewStatsVO;
-import io.reactivex.Flowable;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 /**
@@ -57,7 +53,11 @@ public class InterviewSessionServiceImpl extends ServiceImpl<InterviewSessionMap
     @Autowired
     private ChatMessageMapper chatMessageMapper;
     @Autowired
-    private AiAnalysisService aianalysisService;
+    private InterviewChatService interviewChatService;
+    @Autowired
+    private RedisChatMemoryProvider redisChatMemoryProvider;
+    @Autowired
+    private SysQuestionService sysQuestionService;
     @Autowired
     private ResumeAnalysisService resumeAnalysisService;
 
@@ -68,6 +68,10 @@ public class InterviewSessionServiceImpl extends ServiceImpl<InterviewSessionMap
     @Lazy
     @Autowired
     private ChatContextManager chatContextManager;
+    @Autowired
+    private ResumeChunkService resumeChunkService;
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
 
 
     public InterviewStartVO startInterview(StartInterviewDTO dto){
@@ -76,7 +80,7 @@ public class InterviewSessionServiceImpl extends ServiceImpl<InterviewSessionMap
         if(resume==null){
             throw new ResumeNotFindException("简历未找到，请重新上传简历");
         }
-        if(resume.getStatus()==null||resume.getStatus()<3){
+        if(resume.getStatus()==null||resume.getStatus()<1){
             throw new ResumeAnalysisException("简历尚未分析，请稍后重试");
         }
         LambdaQueryWrapper<InterviewSession> existWrapper=new LambdaQueryWrapper<>();
@@ -111,70 +115,144 @@ public class InterviewSessionServiceImpl extends ServiceImpl<InterviewSessionMap
      *
      * @return
      */
+
+
     @Override
     public SseEmitter chat(ChatDTO dto) {
-        //获取上下文消息  系统评分提示词++历史会话+当前用户消息
-        //todo
-        //先获取redis最后一条数据的AI问题ES匹配标准答案构建提示词，在添加的用户本次回答，跟AI下一次提问
-        ChatContext chatContext = chatContextManager.buildChatContext(dto);
-        List<Message> messages=chatContext.getMessages();
-        //开始SSE
+
+        // 1. 获取 session、校验状态
+        Long sessionId = dto.getSessionId();
+        InterviewSession session = getById(sessionId);
+        if (session == null) {
+            throw new InterviewSessionException("面试会话不存在");
+        }
+        if (Integer.valueOf(2).equals(session.getStatus())) {
+            throw new InterviewSessionException("面试已结束，请重新上传简历");
+        }
+
+        // 2. FSM：读取/推进面试阶段
+        Long userId = session.getUserId();
+        //面试阶段key
+        String phaseKey = RedisConstants.INTERVIEW_PHASE + sessionId;
+        String countKey = RedisConstants.INTERVIEW_QUESTION_COUNT + sessionId;
+        //获取面试题的数量
+        String countStr = stringRedisTemplate.opsForValue().get(countKey);
+        int questionCount = countStr != null ? Integer.parseInt(countStr) : 0;
+        questionCount++;
+        stringRedisTemplate.opsForValue().set(countKey, String.valueOf(questionCount));
+        //创建阶段对象  ，根据当前题目数量跟难度判断处于哪个阶段
+        InterviewPhase phase = InterviewPhase.of(questionCount, session.getDifficulty());
+        stringRedisTemplate.opsForValue().set(phaseKey, phase.name());
+        // 判断是否到达最大题数（面试收尾）
+        int maxQuestions = InterviewPhase.getMaxQuestions(session.getDifficulty());
+        boolean isLastQuestion = questionCount >= maxQuestions;
+        log.debug("FSM: sessionId={}, questionCount={}, phase={}, isLast={}", sessionId, questionCount, phase.name(), isLastQuestion);
+
+        // 3. 提取上下文信息
+        // 3a. 从 Redis 历史中提取上一轮 AI 问题，检索标准答案（用于评分）
+        List<Message> history = chatContextManager.getHistoryFromRedis(sessionId);
+      final  String lastAiQuestion;
+      final  String standardAnswer;
+        if (!history.isEmpty()) {
+            Message lastMsg = history.get(history.size() - 1);
+            if (Role.ASSISTANT.getValue().equals(lastMsg.getRole())) {
+                lastAiQuestion = lastMsg.getContent();
+                standardAnswer = sysQuestionService.searchStanderAnswer(lastAiQuestion);
+            } else {
+                standardAnswer = null;
+                lastAiQuestion = "";
+            }
+        } else {
+            standardAnswer = null;
+            lastAiQuestion = "";
+        }
+
+        // 3b. 简历 RAG：根据面试阶段构造不同检索 Query
+        String userMessage = dto.getUserMessage();
+        String resumeChunks = searchResumeChunksByPhase(userId, phase, userMessage, session.getJobIntention());
+
+        // 4. 开始 SSE
         SseEmitter emitter = new SseEmitter(60000L);
-        Long sessionId=dto.getSessionId();
-        String userMessage=dto.getUserMessage();
-        //将用户的发言先异步存入mysql
-        ChatMessage chatMessage = saveMessage(sessionId, Role.USER.getValue(), userMessage);
-        //调用AI开启流式聊天
-        Flowable<GenerationResult> flowable=aianalysisService.streamChat(messages);
-        //拼接字符串
-        StringBuilder aiResponseBuffer=new StringBuilder();
+        // 将用户的发言先存入 MySQL
+        com.smartinterview.entity.ChatMessage chatMessage = saveMessage(sessionId, Role.USER.getValue(), userMessage);
 
-        flowable.subscribe(
-                result -> {
-                    String chunk=result.getOutput().getChoices().get(0).getMessage().getContent();
-                    if(StrUtil.isNotBlank(chunk)){
-                        aiResponseBuffer.append(chunk);
-                        try {
-                            emitter.send(chunk);
-                        } catch (IOException e) {
-                            emitter.completeWithError(e);
-                        }
-                    }
-                },
-                error -> {
-                    log.error("模拟面试发生异常:{}",error);
-                    try {
-                        emitter.completeWithError(error);
-                    } catch (Exception e) {
+        // 5. 准备 AIService 参数
+        // 获取长期记忆（压缩摘要）
+        RedisChatMemory chatMemory = (RedisChatMemory) redisChatMemoryProvider.get(sessionId);
+        String longTermMemory = chatMemory.getLongTermMemory();
+        if (longTermMemory.isEmpty()) {
+            longTermMemory = "暂无历史记忆，这是面试的第一轮对话";
+        }
 
-                    }
-                },
-                ()->{
-                    String aiFullResponse=aiResponseBuffer.toString();
-                    //AI本次的问题添加到数据库
-                    saveMessage(sessionId,Role.ASSISTANT.getValue(), aiFullResponse);
-                    //创建当前用户消息存到redis
-                    Message curUserMsg = Message.builder().role(Role.USER.getValue()).content(dto.getUserMessage()).build();
-                    //创建AI消息存到redis
-                    Message aiMessage=Message.builder().role(Role.ASSISTANT.getValue()).content(aiFullResponse).build();
-                    //更新redis，进行滑动窗口裁剪
-                    chatContextManager.updateContext(sessionId,curUserMsg,aiMessage);
-                    // 封装评分消息 DTO
-                    QuestionScoreMessage scoreMsg = QuestionScoreMessage.builder()
-                            .sessionId(sessionId)
-                            .messageId(chatMessage.getId())
-                            .aiQuestion(chatContext.getAiQuestion())
-                            .userAnswer(userMessage)
-                            .standardAnswer(chatContext.getStanderAnswer())
-                            .build();
-                    // 投递到 RabbitMQ
-                    rabbitTemplate.convertAndSend(
-                            RabbitConstants.INTERVIEW_SCORE_EXCHANGE,
-                            RabbitConstants.INTERVIEW_SCORE_ROUTING_KEY,
-                            scoreMsg
-                    );
-                    emitter.complete();
-             });
+        AtomicBoolean completed = new AtomicBoolean(false);
+        // 6. 调用 AIService 流式聊天（短期记忆由 RedisChatMemory 自动管理，长期记忆注入系统提示词）
+        // 收尾题：覆盖阶段提示词，指示 AI 输出结束语
+        String finalPhasePrompt = isLastQuestion
+                ? "【面试即将结束】请对候选人说：本次面试到此结束，感谢你的参与。后续我们会综合本次面试作答情况进行评估，祝你一切顺利！注意：在回复的最后，请在新的一行输出标记 [INTERVIEW_END]"
+                : phase.getPhasePrompt();
+        StringBuilder aiResponseBuffer = new StringBuilder();
+        //todo
+        interviewChatService.chat(
+                sessionId,
+                userMessage,        //用户消息
+                finalPhasePrompt,  //阶段系统提示此
+                StrUtil.isNotBlank(resumeChunks) ? resumeChunks : "暂无相关简历片段", //简历切片
+                session.getJobIntention() != null ? session.getJobIntention() : "", //求职意向
+                session.getDifficulty() != null ? session.getDifficulty() : "",  //面试难度
+                longTermMemory  //长期记忆   ,短期记忆redis列表自动发送
+        ).onPartialResponse(partialResponse -> {
+            if (completed.get()) {
+                return;
+            }
+            if (StrUtil.isNotBlank(partialResponse)) {
+                aiResponseBuffer.append(partialResponse);
+                try {
+                    emitter.send(partialResponse);
+                } catch (IOException e) {
+                    completed.set(true);
+                    emitter.completeWithError(e);
+                }
+            }
+        }).onCompleteResponse(response -> {
+            //看看是否是false
+            if (!completed.compareAndSet(false, true)) {
+                return;
+            }
+            String aiFullResponse = aiResponseBuffer.toString();
+            // AI 回复存入 MySQL
+            saveMessage(sessionId, Role.ASSISTANT.getValue(), aiFullResponse);
+            // 封装评分消息 DTO
+            QuestionScoreMessage scoreMsg = QuestionScoreMessage.builder()
+                    .sessionId(sessionId)
+                    .messageId(chatMessage.getId())
+                    .aiQuestion(lastAiQuestion)
+                    .userAnswer(userMessage)
+                    .standardAnswer(standardAnswer != null ? standardAnswer : "")
+                    .build();
+            // 投递到 RabbitMQ
+            rabbitTemplate.convertAndSend(
+                    RabbitConstants.INTERVIEW_SCORE_EXCHANGE,
+                    RabbitConstants.INTERVIEW_SCORE_ROUTING_KEY,
+                    scoreMsg
+            );
+            // 发送 [DONE] 标记，告知前端流结束
+            try {
+                emitter.send("[DONE]");
+            } catch (Exception ignore) {
+            }
+            emitter.complete();
+        }).onError(error -> {  //onPartialResponse捕获了异常，就不再执行onError
+            if (!completed.compareAndSet(false, true)) {
+                return;
+            }
+            log.error("模拟面试发生异常:{}", error);
+            try {
+                emitter.completeWithError(error);
+            } catch (Exception e) {
+                // ignore
+            }
+        }).start();
+
         return emitter;
     }
 
@@ -192,18 +270,6 @@ public class InterviewSessionServiceImpl extends ServiceImpl<InterviewSessionMap
        if (Integer.valueOf(2).equals(session.getStatus())) {
            throw new InterviewSessionException("面试已结束，请勿重复操作");
 
-       }
-       List<InterviewReport> reportList=interviewReportService.lambdaQuery()
-               .ne(InterviewReport::getQuestionText,"")
-                       .eq(InterviewReport::getSessionId,sessionId)
-                               .list();
-       if(reportList!=null){
-          int avgScore=(int) Math.round( reportList.stream()
-                  .mapToInt(r->r.getScore()==null?0:r.getScore())//转成int流
-                  .average() //求平均数
-                  .orElse(0) //集合为空时，没数据置0
-          );
-          session.setTotalScore(avgScore);
        }
 
        session.setStatus(2);
@@ -235,19 +301,51 @@ public class InterviewSessionServiceImpl extends ServiceImpl<InterviewSessionMap
         chatMessageMapper.insert(chatMessage);
         return chatMessage;
     }
-    //提取简历摘要
-    public String getSummary(Long sessionId){
-        InterviewSession session = getById(sessionId);
-        if(session==null){
-            return "简历找不到，请直接开始技术相关的面试";
+
+    /**
+     * 按面试阶段构造简历 RAG 检索 Query
+     * - WARM_UP：检索技能栈/技术清单，不依赖项目细节
+     * - PROJECT_DEEP_DIVE：检索项目描述/技术选型/问题与方案，强制绑定项目
+     * - SYSTEM_DEEP：检索架构/分布式经验，无则用通用深度关键词
+     */
+    private String searchResumeChunksByPhase(Long userId, InterviewPhase phase,
+                                              String userMessage, String jobIntention) {
+        String ragQuery;
+        int topK;
+
+        switch (phase) {
+            case WARM_UP:
+                // 暖场：检索技能清单，不看项目细节
+                ragQuery = "技术栈掌握技能" + (StrUtil.isNotBlank(jobIntention) ? " " + jobIntention : "");
+                topK = 2;
+                break;
+
+            case PROJECT_DEEP_DIVE:
+                // 项目深挖：强制检索项目段落、技术选型、痛点优化
+                ragQuery = "项目 技术方案 架构 遇到问题 解决方案 优化 " + userMessage;
+                topK = 2;
+                break;
+
+            case SYSTEM_DEEP:
+                // 系统深潜：优先检索架构经验，结合用户话题
+                ragQuery = "分布式高可用架构 分库分表 中间件 性能优化 " + userMessage;
+                topK = 2;
+                break;
+
+            default:
+                ragQuery = userMessage;
+                topK = 2;
         }
-        Long resumeId = session.getResumeId();
-        ResumeAnalysis resumeAnalysis =resumeAnalysisService.getById(resumeId);
-        if(resumeAnalysis==null){
-            return "简历找不到，请直接开始技术相关的面试";
+
+        String chunks = resumeChunkService.searchRelevantChunks(userId, ragQuery, topK);
+
+        // 降级：无结果时用求职意向兜底
+        if (StrUtil.isBlank(chunks)) {
+            String fallback = StrUtil.isNotBlank(jobIntention) ? jobIntention : "技术面试";
+            chunks = resumeChunkService.searchRelevantChunks(userId, fallback, 1);
         }
-        String summary=resumeAnalysis.getSummary();
-        return summary;
+
+        return chunks;
     }
     public void logicalDelete(Long sessionId){
         InterviewSession interviewSession=getById(sessionId);
@@ -275,11 +373,11 @@ public class InterviewSessionServiceImpl extends ServiceImpl<InterviewSessionMap
             InterviewStatsVO.ScoreTrend scoreTrend = new InterviewStatsVO.ScoreTrend();
             scoreTrend.setDate(r.getCreateTime().format(DateTimeFormatter.ofPattern("MM-dd")));
             scoreTrend.setTitle(r.getTitle());
-            scoreTrend.setScore(r.getTotalScore());
+            scoreTrend.setScore(r.getTotalScore() == null ? 0 : r.getTotalScore());
             return scoreTrend;
         }).collect(Collectors.toList());
         //计算平均分,返回值类型是double需要强转int
-        int avgScore=Math.round((int) list.stream().mapToInt(r->r.getTotalScore()).average().orElse(0));
+        int avgScore=Math.round((int) list.stream().mapToInt(r->r.getTotalScore()==null?0:r.getTotalScore()).average().orElse(0));
         InterviewStatsVO vo =new InterviewStatsVO();
         vo.setAvgScore(avgScore);
         vo.setTotalCount(list.size());

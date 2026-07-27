@@ -16,6 +16,7 @@ public class WebSocketConfig implements WebSocketConfigurer {
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
+        // 前端连接地址：ws://<your-host>:<port>/ws/audio
         registry.addHandler(audioWebSocketHandler, "/ws/audio")
                 .setAllowedOrigins("*");
     }

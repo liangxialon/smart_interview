@@ -30,6 +30,9 @@ public interface ResumeAnalysisService extends IService<ResumeAnalysis> {
     //void asyncGenerateScore(Long resumeId,String rawText);
 
     String queryReport(Long resumeId);
+    SseEmitter streamOptimize(Long resumeId, String jobDescription);
+    String queryOptimize(Long resumeId);
+
 
 
     // PageResult pageQuery(Integer current, Integer size);

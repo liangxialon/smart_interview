@@ -54,10 +54,7 @@ public class SysQuestionController {
                     new QuestionDataListener(sysQuestionService)
             ).sheet().doRead();//读取第一个sheet，开始执行
 
-            // 导入完成后异步为新题目生成向量
-            //sysQuestionServiceImpl.batchGenerateEmbedding();
-
-            return Result.success("导入成功，正在后台生成向量索引，请等待约1分钟");
+            return Result.success("导入成功，题目已同步到ES并生成向量索引");
         } catch (Exception e) {
             log.error("题库导入失败", e);
             return Result.error("题库导入失败：" + e.getMessage());

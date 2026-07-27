@@ -35,14 +35,6 @@ public class RabbitConfig {
        return BindingBuilder.bind(resumeParseQueue).to(directParseExchange).with(RabbitConstants.RESUME_PARSE_ROUTING_KEY);
     }
     @Bean
-    public Queue resumeScoreQueue(){return new Queue(RabbitConstants.RESUME_SCORE_QUEUE,true);}
-    @Bean
-    public DirectExchange directResumeScoreExchange(){return new DirectExchange(RabbitConstants.RESUME_SCORE_EXCHANGE,true,false);}
-    @Bean
-    public Binding bindingScore(Queue resumeScoreQueue,DirectExchange directResumeScoreExchange){
-        return BindingBuilder.bind(resumeScoreQueue).to(directResumeScoreExchange).with(RabbitConstants.RESUME_SCORE_ROUTING_KEY);
-    }
-    @Bean
     public Queue interviewScoreQueue(){return new Queue(RabbitConstants.INTERVIEW_SCORE_QUEUE,true);}
     @Bean
     public DirectExchange interviewScoreExchange(){return new DirectExchange(RabbitConstants.INTERVIEW_SCORE_EXCHANGE,true,false);}

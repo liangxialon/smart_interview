@@ -53,20 +53,50 @@ public class ResumeController {
     //produces返回给前端为流式文本数据
     @GetMapping(value="/ai/stream/{resumeId}",produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamAiAnalysis(@PathVariable("resumeId") Long resumeId, HttpServletResponse response){
-        //服务器转字节时采用UTF-8
         response.setCharacterEncoding("UTF-8");
-        //告知前端传送流式文本数据，采用UTF--8编码
-       response.setContentType("text/event-stream;charset=UTF-8");
-       log.info("开始分析简历，简历id:{}",resumeId);
+        response.setContentType("text/event-stream;charset=UTF-8");
+        response.setHeader("Cache-Control", "no-cache");
+        response.setHeader("Connection", "keep-alive");
+        log.info("开始分析简历，简历id:{}",resumeId);
         return resumeAnalysisService.streamAiAnalysis(resumeId);
 
     }
-    @Operation(summary="查询简历评分和摘要")
+    @Operation(summary="查询简历分析结果（状态+评分+报告）")
     @GetMapping("detail/{resumeId}")
     public  Result queryDetail(@PathVariable Long resumeId){
         ResumeDetailVO resumeDetail = resumeAnalysisService.getResumeDetail(resumeId);
         return Result.success(resumeDetail);
 
+    }
+
+    /**
+     * 简历优化（SSE 流式）
+     * 读取简历原文 + AI诊断报告，输出优化后的完整简历
+     * @param resumeId 简历ID
+     * @param jobDescription 目标岗位JD（可选，传入后会补全简历中缺失的关键词）
+     */
+    @Operation(summary="简历优化（流式）")
+    @GetMapping(value="/optimize/stream/{resumeId}", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter streamOptimize(@PathVariable("resumeId") Long resumeId,
+                                     @RequestParam(value = "jobDescription", required = false) String jobDescription,
+                                     HttpServletResponse response) {
+        response.setCharacterEncoding("UTF-8");
+        response.setContentType("text/event-stream;charset=UTF-8");
+        response.setHeader("Cache-Control", "no-cache");
+        response.setHeader("Connection", "keep-alive");
+        log.info("开始简历优化，resumeId={}, hasJD={}", resumeId, jobDescription != null && !jobDescription.isBlank());
+        return resumeAnalysisService.streamOptimize(resumeId, jobDescription);
+    }
+
+    /**
+     * 查询已生成的简历优化建议（非流式）
+     * @param resumeId 简历ID
+     */
+    @Operation(summary="查询简历优化建议")
+    @GetMapping("optimize/{resumeId}")
+    public Result queryOptimize(@PathVariable Long resumeId) {
+        String suggestion = resumeAnalysisService.queryOptimize(resumeId);
+        return Result.success(suggestion);
     }
     @Operation(summary="查询简历状态")
     @GetMapping("status/{resumeId}")
@@ -83,13 +113,6 @@ public class ResumeController {
 //      PageResult pageResult=  resumeAnalysisService.pageQuery(current,size);
 //      return Result.success(pageResult);
 //    }
-    @Operation(summary="查询简历报告")
-    @GetMapping("report/{resumeId}")
-    public Result getResumeReport(@PathVariable Long resumeId){
-      String report=  resumeAnalysisService.queryReport(resumeId);
-      return Result.success(report);
-
-    }
     @Operation(summary="查询简历列表")
     @GetMapping("list")
     public Result queryResume(){

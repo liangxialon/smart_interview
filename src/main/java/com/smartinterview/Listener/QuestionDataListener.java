@@ -33,18 +33,16 @@ public class QuestionDataListener extends AnalysisEventListener<QuestionImportDT
         //实时判断 ，元素大于=100就入库
         if(questionList.size()>=100){
             questionService.saveBatch(questionList);
-            // 2. 将带有 ID 的数据同步写入 ES 索引
             questionService.syncToEsBatch(questionList);
             questionList.clear();
         }
     }
     public void doAfterAllAnalysed(AnalysisContext context){
-        //最后剩余的入库
         if(!questionList.isEmpty()){
             questionService.saveBatch(questionList);
-        }
             questionService.syncToEsBatch(questionList);
-
+            questionList.clear();
+        }
     }
 
 

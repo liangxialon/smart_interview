@@ -2,6 +2,7 @@ package com.smartinterview.websocket;
 
 import com.alibaba.dashscope.audio.asr.recognition.Recognition;
 import com.alibaba.dashscope.audio.asr.recognition.RecognitionParam;
+import com.alibaba.dashscope.audio.asr.recognition.RecognitionResult;
 import com.alibaba.dashscope.common.ResultCallback;
 import com.alibaba.dashscope.exception.NoApiKeyException;
 import com.smartinterview.common.util.UserHolder;
@@ -80,45 +81,34 @@ public class AudioWebSocketHandler extends BinaryWebSocketHandler {
             sessionTextBuffer.put(sessionId, new StringBuilder());
 
             // 启动流式识别
-            recognition.call(param, new ResultCallback<String>() {
+            // 泛型必须为 RecognitionResult
+            recognition.call(param, new ResultCallback<RecognitionResult>() {
                 @Override
-                public void onEvent(String result) {
+                public void onEvent(RecognitionResult result) {
                     // 阿里云返回的实时识别结果，推送给前端
                     try {
-                        if (session.isOpen()) {
-                            session.sendMessage(new TextMessage(result));
+                        if (result != null && result.getSentence() != null && session.isOpen()) {
+                            String text = result.getSentence().getText();
+                            if (text != null && !text.isBlank()) {
+                                session.sendMessage(new TextMessage(text));
+                            }
                         }
                     } catch (IOException e) {
-                        log.error("推送识别结果失败, sessionId={}", sessionId, e);
+                        log.error("推送识别结果失败, sessionId={}", session.getId(), e);
                     }
                 }
 
                 @Override
                 public void onComplete() {
-                    log.info("语音识别流完成, sessionId={}", sessionId);
-                    try {
-                        if (session.isOpen()) {
-                            session.sendMessage(new TextMessage("[ASR_DONE]"));
-                        }
-                    } catch (IOException e) {
-                        log.error("推送完成信号失败", e);
-                    }
+                    log.info("实时识别完成, sessionId={}", session.getId());
                 }
 
                 @Override
                 public void onError(Exception e) {
-                    log.error("语音识别异常, sessionId={}", sessionId, e);
-                    try {
-                        if (session.isOpen()) {
-                            session.sendMessage(new TextMessage("[ASR_ERROR] " + e.getMessage()));
-                        }
-                    } catch (IOException ex) {
-                        log.error("推送错误信号失败", ex);
-                    }
+                    log.error("实时识别发生错误, sessionId={}", session.getId(), e);
                 }
             });
-
-        } catch (NoApiKeyException e) {
+        } catch (Exception e) {
             log.error("DashScope API Key 未配置", e);
             session.close(CloseStatus.SERVER_ERROR);
         }
@@ -136,7 +126,8 @@ public class AudioWebSocketHandler extends BinaryWebSocketHandler {
 
         byte[] pcmData = message.getPayload().array();
         try {
-            recognition.sendAudioFrame(pcmData);
+            // 方案 A：直接传入 message.getPayload()（推荐）
+            recognition.sendAudioFrame(message.getPayload());
         } catch (Exception e) {
             log.error("发送音频帧失败, sessionId={}", sessionId, e);
         }

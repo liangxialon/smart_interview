@@ -3,9 +3,10 @@ package com.smartinterview.Listener;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import com.smartinterview.common.constants.RabbitConstants;
+import com.smartinterview.common.exception.QuestionScoreException;
 import com.smartinterview.entity.InterviewReport;
 import com.smartinterview.entity.QuestionScoreMessage;
-import com.smartinterview.service.AiAnalysisService;
+import com.smartinterview.service.ai.InterviewEvaluateService;
 import com.smartinterview.service.InterviewReportService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -21,14 +22,17 @@ import java.time.LocalDateTime;
 @Slf4j
 public class InterviewScoreListener {
     @Autowired
-    private AiAnalysisService aiAnalysisService;
+    private InterviewEvaluateService interviewEvaluateService;
     @Autowired
     InterviewReportService interviewReportService;
-    @RabbitListener(queues= RabbitConstants.INTERVIEW_SCORE_QUEUE)
-    public void handleQuestionScore(QuestionScoreMessage msg){
+
+    @RabbitListener(queues = RabbitConstants.INTERVIEW_SCORE_QUEUE)
+    public void handleQuestionScore(QuestionScoreMessage msg) {
         try {
-            //调用AI进行评分
-            String aiRaw=aiAnalysisService.evaluateAnswer(msg.getAiQuestion(),msg.getUserAnswer(),msg.getStandardAnswer());
+            //通过langchain4j AIService调用AI进行评分
+            String aiRaw = interviewEvaluateService.evaluate(
+                    msg.getAiQuestion(), msg.getUserAnswer(), msg.getStandardAnswer());
+
             JSONObject json = JSONUtil.parseObj(aiRaw);
             //将报告保存到数据库
             InterviewReport interviewReport = InterviewReport.builder()
@@ -46,7 +50,7 @@ public class InterviewScoreListener {
             interviewReportService.save(interviewReport);
         } catch (Exception e) {
             log.error("单题评分失败，准备触发 MQ 重试: {}", msg.getSessionId());
-            throw e; // 抛出异常触发 MQ 重试机制
+            throw new QuestionScoreException("单题评分失败"+e);
         }
     }
 }

@@ -1,11 +1,15 @@
-package com.smartinterview.service;
+package com.smartinterview.service.ai;
 
 import dev.langchain4j.service.SystemMessage;
 import dev.langchain4j.service.UserMessage;
 import dev.langchain4j.service.V;
 import dev.langchain4j.service.spring.AiService;
+import dev.langchain4j.service.spring.AiServiceWiringMode;
 
-@AiService(chatModel = "reportChatModel")
+@AiService(
+        wiringMode = AiServiceWiringMode.EXPLICIT,
+        chatModel = "reportChatModel"
+)
 public interface InterviewEvaluateService {
 
     @SystemMessage(fromResource = "prompts/evaluate-system.st")
