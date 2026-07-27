@@ -6,4 +6,5 @@ import lombok.Data;
 public class ResumeDetailVO {
     private Integer status;
     private String score;
+    private String report;
 }

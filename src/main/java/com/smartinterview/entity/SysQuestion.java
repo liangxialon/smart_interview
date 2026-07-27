@@ -32,12 +32,6 @@ public class SysQuestion {
     private String answer;
 
     private Integer difficulty;
-    /**
-     * 向量 JSON 字符串，通义千问 text-embedding-v3 生成，1024 维
-     * 格式：[0.123, -0.456, ...]
-     * 存储在 MySQL MEDIUMTEXT 列
-     */
-    private String embedding;
 
     private LocalDateTime createTime;
 
