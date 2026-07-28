@@ -1,5 +1,6 @@
 package com.smartinterview.service;
 
+import com.smartinterview.common.result.PageResult;
 import com.smartinterview.entity.SysQuestion;
 import com.baomidou.mybatisplus.extension.service.IService;
 
@@ -16,4 +17,5 @@ public interface SysQuestionService extends IService<SysQuestion> {
      String searchStanderAnswer(String userMessage);
      void syncToEsBatch(List<SysQuestion> questions) ;
      void batchGenerateEmbeddingForQuestions(List<SysQuestion> questions);
+     PageResult pageQuery(Integer page, Integer pageSize, String category, String question, Integer difficulty);
 }

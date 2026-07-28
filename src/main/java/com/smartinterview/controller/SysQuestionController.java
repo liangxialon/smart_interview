@@ -80,4 +80,15 @@ public class SysQuestionController {
         return Result.success(s);
     }
 
+    @Operation(summary = "分页查询题库")
+    @GetMapping("/list")
+    public Result listQuestions(
+            @RequestParam(defaultValue = "1") Integer page,
+            @RequestParam(defaultValue = "10") Integer pageSize,
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) String question,
+            @RequestParam(required = false) Integer difficulty) {
+        return Result.success(sysQuestionService.pageQuery(page, pageSize, category, question, difficulty));
+    }
+
 }

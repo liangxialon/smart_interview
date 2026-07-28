@@ -1,8 +1,11 @@
 package com.smartinterview.service.impl;
 
 import cn.hutool.core.util.StrUtil;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.smartinterview.common.exception.ElasticSearchException;
+import com.smartinterview.common.result.PageResult;
 import com.smartinterview.entity.SysQuestion;
 import com.smartinterview.mapper.SysQuestionMapper;
 import com.smartinterview.service.SysQuestionService;
@@ -353,6 +356,23 @@ public class SysQuestionServiceImpl extends ServiceImpl<SysQuestionMapper, SysQu
         } catch (Exception e) {
             log.error("单题生成向量失败，questionId={}", q.getId(), e);
         }
+    }
+
+    @Override
+    public PageResult pageQuery(Integer page, Integer pageSize, String category, String question, Integer difficulty) {
+        LambdaQueryWrapper<SysQuestion> wrapper = new LambdaQueryWrapper<>();
+        wrapper.like(StrUtil.isNotBlank(category), SysQuestion::getCategory, category)
+                .eq(difficulty != null, SysQuestion::getDifficulty, difficulty)
+                .like(StrUtil.isNotBlank(question), SysQuestion::getQuestion, question)
+                .orderByDesc(SysQuestion::getCreateTime);
+        Page<SysQuestion> pageResult = page(new Page<>(page, pageSize), wrapper);
+        PageResult result = new PageResult();
+        result.setTotal(pageResult.getTotal());
+        result.setPages(pageResult.getPages());
+        result.setCurrent((int) pageResult.getCurrent());
+        result.setSize(pageResult.getSize());
+        result.setRecords(pageResult.getRecords());
+        return result;
     }
 }
 
