@@ -10,6 +10,7 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @NoArgsConstructor
 public class QuestionScoreMessage {
+    private Long reportId;
     private Long sessionId;
     private Long messageId;
     private String aiQuestion;

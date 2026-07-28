@@ -175,7 +175,36 @@ public class InterviewSessionServiceImpl extends ServiceImpl<InterviewSessionMap
         SseEmitter emitter = new SseEmitter(60000L);
         // 将用户的发言先存入 MySQL
         com.smartinterview.entity.ChatMessage chatMessage = saveMessage(sessionId, Role.USER.getValue(), userMessage);
+        // 👇================ 核心修改点：把占位记录和发MQ，提前到这里 ================👇
+        // 只要不是第一句打招呼（即存在上一轮的AI问题），就立刻在数据库占位并发送MQ评分。
+        // 用户的回答已经固定，不需要等大模型慢吞吞地生成完回复再去做这件事！
+        if (StrUtil.isNotBlank(lastAiQuestion)) {
+            InterviewReport pendingReport = InterviewReport.builder()
+                    .sessionId(sessionId)
+                    .messageId(chatMessage.getId())
+                    .questionText(lastAiQuestion) // 直接用上一轮的AI问题
+                    .userAnswer(userMessage)
+                    .standardAnswer(standardAnswer != null ? standardAnswer : "")
+                    .createTime(LocalDateTime.now())
+                    // score 默认为 null
+                    .build();
+            interviewReportService.save(pendingReport);
 
+            // 封装评分消息 DTO 发给 MQ
+            QuestionScoreMessage scoreMsg = QuestionScoreMessage.builder()
+                    .reportId(pendingReport.getId())
+                    .sessionId(sessionId)
+                    .messageId(chatMessage.getId())
+                    .aiQuestion(lastAiQuestion)
+                    .userAnswer(userMessage)
+                    .standardAnswer(standardAnswer != null ? standardAnswer : "")
+                    .build();
+            rabbitTemplate.convertAndSend(
+                    RabbitConstants.INTERVIEW_SCORE_EXCHANGE,
+                    RabbitConstants.INTERVIEW_SCORE_ROUTING_KEY,
+                    scoreMsg
+            );
+        }
         // 5. 准备 AIService 参数
         // 获取长期记忆（压缩摘要）
         RedisChatMemory chatMemory = (RedisChatMemory) redisChatMemoryProvider.get(sessionId);
@@ -221,20 +250,6 @@ public class InterviewSessionServiceImpl extends ServiceImpl<InterviewSessionMap
             String aiFullResponse = aiResponseBuffer.toString();
             // AI 回复存入 MySQL
             saveMessage(sessionId, Role.ASSISTANT.getValue(), aiFullResponse);
-            // 封装评分消息 DTO
-            QuestionScoreMessage scoreMsg = QuestionScoreMessage.builder()
-                    .sessionId(sessionId)
-                    .messageId(chatMessage.getId())
-                    .aiQuestion(lastAiQuestion)
-                    .userAnswer(userMessage)
-                    .standardAnswer(standardAnswer != null ? standardAnswer : "")
-                    .build();
-            // 投递到 RabbitMQ
-            rabbitTemplate.convertAndSend(
-                    RabbitConstants.INTERVIEW_SCORE_EXCHANGE,
-                    RabbitConstants.INTERVIEW_SCORE_ROUTING_KEY,
-                    scoreMsg
-            );
             // 发送 [DONE] 标记，告知前端流结束
             try {
                 emitter.send("[DONE]");

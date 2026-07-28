@@ -79,12 +79,17 @@ public class InterviewReportServiceImpl extends ServiceImpl<InterviewReportMappe
         InterviewReportVO interviewReportVO=new InterviewReportVO();
         interviewReportVO.setSessionId(sessionId);
         interviewReportVO.setQuestionCount(list.size());
-       //如果查不到数据
+        // ================== 👇 替换掉你原来的这一块 👇 ==================
+        //如果查不到数据
         if(list.isEmpty()){
             interviewReportVO.setTotalScore(0);
             interviewReportVO.setCorrectCount(0);
             interviewReportVO.setCorrectRate("0%");
             interviewReportVO.setItems(List.of());
+
+            // 【新增】没有任何有效题目时，直接告诉前端评分已结束，防止前端无限轮询
+            interviewReportVO.setScoringComplete(true);
+
             return interviewReportVO;
         }
         int totalScore =(int) Math.round(  //将总分四舍五入

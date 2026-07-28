@@ -34,23 +34,24 @@ public class InterviewScoreListener {
                     msg.getAiQuestion(), msg.getUserAnswer(), msg.getStandardAnswer());
 
             JSONObject json = JSONUtil.parseObj(aiRaw);
-            //将报告保存到数据库
-            InterviewReport interviewReport = InterviewReport.builder()
-                    .sessionId(msg.getSessionId())
-                    .messageId(msg.getMessageId())
-                    .questionText(msg.getAiQuestion())
-                    .aiRaw(aiRaw)
-                    .userAnswer(msg.getUserAnswer())
-                    .standardAnswer(msg.getStandardAnswer())
-                    .score(json.getInt("score"))
-                    .isCorrect(json.getBool("isCorrect"))
-                    .comment(json.getStr("comment"))
-                    .createTime(LocalDateTime.now())
-                    .build();
-            interviewReportService.save(interviewReport);
+            // ================== 修改代码：获取占位记录并执行更新 ==================
+            InterviewReport report = interviewReportService.getById(msg.getReportId());
+            if (report != null) {
+                report.setAiRaw(aiRaw);
+                report.setScore(json.getInt("score"));
+                report.setIsCorrect(json.getBool("isCorrect"));
+                report.setComment(json.getStr("comment"));
+                // 可选：report.setUpdateTime(LocalDateTime.now());
+                interviewReportService.updateById(report);
+            } else {
+                log.warn("未找到评分占位记录，sessionId:{}, reportId:{}", msg.getSessionId(), msg.getReportId());
+            }
+            // ======================================================================
+
         } catch (Exception e) {
-            log.error("单题评分失败，准备触发 MQ 重试: {}", msg.getSessionId());
+            log.error("单题评分失败，准备触发 MQ 重试: {}", msg.getSessionId(), e);
             throw new QuestionScoreException("单题评分失败"+e);
         }
+
     }
 }
