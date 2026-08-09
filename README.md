@@ -1,6 +1,6 @@
 # 智面Rush · AI 智能模拟面试平台
 
-> 面向 Java 后端求职者的 AI 驱动模拟面试系统，支持简历诊断、AI 自适应面试、RAG 增强评分、面试报告导出。
+> 面向求职者的 AI 驱动模拟面试系统，支持简历诊断、AI 自适应面试、RAG 增强评分、实时语音输入、面试报告导出。
 
 🔗 演示地址：http://59.110.243.60:3000/
 
@@ -10,10 +10,15 @@
 
 | 模块 | 说明 |
 |------|------|
-| 简历诊断 | 上传 PDF 简历，AI 自动解析并生成诊断报告和结构化评分 |
-| AI 模拟面试 | 大模型扮演 BAT 高级面试官，根据简历和难度等级自适应提问 |
-| RAG 增强评分 | 题目向量化后与题库匹配，命中则注入标准答案辅助 AI 评分 |
-| 面试报告 | 面试结束后自动生成含逐题评分的报告，支持 PDF 导出 |
+| 用户管理 | 手机验证码 + 密码双登录方式，JWT + Redis 会话管理，头像上传 |
+| 简历诊断 | 上传 PDF 简历，RabbitMQ 异步解析，AI 流式生成诊断报告和优化建议 |
+| AI 模拟面试 | 大模型扮演高级面试官，根据简历和难度等级自适应提问，SSE 流式对话 |
+| 实时语音输入 | WebSocket + DashScope paraformer 实时语音识别，边说边转文字 |
+| RAG 增强评分 | 题目向量化存入 ES，混合检索（关键词 + 语义相似度）匹配标准答案辅助评分 |
+| 面试报告 | 异步评分 + 占位符模式解决时序问题，自动计算综合得分、正确率，支持 PDF 导出 |
+| 薄弱项训练 | AI 分析答错题目识别薄弱领域，自动生成专项练习题，结果缓存避免重复调用 |
+| 错题收藏 | 收藏典型面试题便于复习，支持取消收藏 |
+| 题库管理 | 管理员 Excel 批量导入，自动生成 Embedding 向量写入 ES，分页模糊查询 |
 
 ---
 
@@ -25,49 +30,52 @@
 | 数据库 | MySQL 8 |
 | 缓存 | Redis |
 | 消息队列 | RabbitMQ |
-| AI 接入 | DashScope（通义千问）、text-embedding-v3 |
+| 搜索引擎 | Elasticsearch 8（IK 分词 + dense_vector 向量检索）|
+| AI 接入 | langchain4j + DashScope（通义千问）、text-embedding-v3 |
 | 推流协议 | SSE（Server-Sent Events） |
+| 实时语音 | WebSocket + DashScope paraformer-realtime-v2 |
 | PDF 处理 | Apache PDFBox（解析）、iText7（生成） |
 | 接口文档 | Knife4j（Springdoc OpenAPI3） |
 | 对象存储 | 阿里云 OSS |
+| Excel 处理 | EasyExcel |
 
 ---
 
 ## 核心设计
 
-### 1. 双轨异步架构
-
-简历处理涉及 PDF 解析、AI 分析、AI 评分三个耗时步骤，同步执行需等待 10s 以上。
-
-```
-上传接口 (200ms 返回)
-    │
-    ├── 前台：SSE 流式推送 AI 分析结果（用户即时看到逐字输出）
-    │
-    └── 后台：RabbitMQ 三队列异步流水线
-            resume_parse_queue  → PDF 文本提取
-            resume_score_queue  → AI 结构化评分
-            interview_score_queue → 每轮面试评分
-```
-
-两条链路解耦，互不阻塞，接口响应从 10s+ 降至 200ms。
-
----
-
-### 2. RAG 检索增强评分
+### 1. RAG 混合检索增强评分
 
 纯大模型评分存在主观性强、标准不一的问题，引入 RAG 提升评分准确性：
 
 ```
 AI 提问
   → 提取题目文本
-  → text-embedding-v3 生成 1024 维向量
-  → 与内存题库（CopyOnWriteArrayList）做余弦相似度计算
-  → 相似度 >= 0.75：注入标准答案到评分 Prompt
-  → 相似度 < 0.75：AI 仅凭自身能力评分（降级处理）
+  → 调 DashScope text-embedding-v3 生成 1024 维向量
+  → ES function_score 混合查询：
+      ├─ IK 分词关键词匹配（文本相关性）
+      └─ dense_vector 余弦相似度（语义相关性）
+  → 综合得分 >= 80：命中标准答案，注入评分 Prompt
+  → 综合得分 < 80：AI 仅凭自身能力评分（降级处理）
 ```
 
-题库约 200 道，向量数据直接存 MySQL，启动时加载至内存，查询延迟可忽略，无需引入 Milvus 等向量数据库。
+题目导入时自动生成 Embedding 写入 ES，支持批量重建向量索引。
+
+---
+
+### 2. 异步评分 + 占位符模式
+
+面试评分通过 RabbitMQ 异步处理，采用占位符模式解决时序问题：
+
+```
+用户回答问题
+  → 创建 InterviewReport 占位记录（questionText 为空）
+  → 发送评分消息到 interview_score_queue
+  → MQ 消费者调 AI 评分（分数 + 评语 + 是否正确）
+  → 更新占位记录，填充评分数据
+  → 前端轮询报告接口，检测所有题目评分完成
+```
+
+占位符模式避免了前端轮询时报告记录尚未创建的问题。
 
 ---
 
@@ -86,7 +94,7 @@ AI 提问
 
 ```
 RefreshInterceptor (order=0)
-  → 提取 token（Header 或 URL 参数）
+  → 提取 token（Header 或 URL 参数，支持 SSE 场景）
   → 解析 JWT，从 Redis 加载用户信息至 ThreadLocal
   → 刷新 TTL（续签）
 
@@ -101,6 +109,20 @@ JWT 负责签发验证，Redis 负责会话存储和续期，支持主动登出�
 
 ---
 
+### 5. 实时语音识别
+
+```
+前端 WebSocket 连接 /ws/audio?token=xxx
+  → 发送 PCM 音频流（16kHz 单声道）
+  → 后端调 DashScope paraformer-realtime-v2 实时识别
+  → 返回识别文字片段
+  → 发送 "END" 结束音频流
+```
+
+Token 在 WebSocket 握手阶段通过 Redis 校验，支持前端边说边显示。
+
+---
+
 ## 快速启动
 
 ### 环境要求
@@ -109,6 +131,7 @@ JWT 负责签发验证，Redis 负责会话存储和续期，支持主动登出�
 - MySQL 8.0+
 - Redis 6.0+
 - RabbitMQ 3.x
+- Elasticsearch 8.x
 
 ### 步骤
 
@@ -122,7 +145,6 @@ cd smart_interview
 **2. 初始化数据库**
 
 ```bash
-# 执行 sql 目录下的建表脚本
 mysql -u root -p < sql/smart_interview.sql
 ```
 
@@ -142,9 +164,16 @@ spring:
   rabbitmq:
     host: localhost
     port: 5672
+  elasticsearch:
+    host: localhost
+    port: 9200
+
+ai:
+  api-key: your_dashscope_api_key   # 阿里云 DashScope API Key（langchain4j OpenAI 兼容）
+  base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
 
 dashscope:
-  api-key: your_dashscope_api_key   # 阿里云 DashScope API Key
+  api-key: your_dashscope_api_key   # DashScope 原生 API Key（语音识别等）
 
 aliyun:
   oss:
@@ -170,27 +199,35 @@ mvn spring-boot:run
 
 ```
 smart_interview
-├── src/main/java/com/zhimian
-│   ├── controller/        # 接口层
-│   ├── service/           # 业务逻辑
-│   ├── manager/           # 公共组件（ChatContextManager、PromptManager）
-│   ├── mapper/            # 数据访问（MyBatis-Plus）
-│   ├── listener/          # RabbitMQ 消费者
-│   ├── interceptor/       # 三级认证拦截器
-│   └── config/            # 配置类
+├── src/main/java/com/smartinterview
+│   ├── controller/          # 接口层（用户、简历、面试、报告、题库）
+│   ├── service/             # 业务逻辑
+│   │   ├── impl/            # 服务实现
+│   │   └── ai/              # AI 相关服务（评分、简历优化、薄弱项训练等）
+│   ├── common/
+│   │   ├── manager/         # 公共组件（ChatContext、Prompt、RedisChatMemory）
+│   │   ├── constants/       # 常量（Redis Key、RabbitMQ 队列名）
+│   │   ├── util/            # 工具类（JWT、OSS、正则、简历解析）
+│   │   ├── result/          # 统一返回格式
+│   │   └── exception/       # 自定义异常
+│   ├── config/              # 配置类（AI、ES、MQ、Redis、WebSocket、CORS 等）
+│   ├── interceptor/         # 三级认证拦截器
+│   ├── Listener/            # RabbitMQ 消费者（简历解析、面试评分）
+│   ├── websocket/           # WebSocket 处理器（语音识别）
+│   ├── entity/              # 实体类
+│   ├── dto/                 # 请求参数
+│   ├── vo/                  # 响应对象
+│   └── mapper/              # 数据访问层（MyBatis-Plus）
 ├── src/main/resources
-│   ├── prompts/           # Prompt 模板（.st 文件）
-│   ├── fonts/             # iText7 中文字体
+│   ├── prompts/             # Prompt 模板（.st 文件）
+│   ├── fonts/               # iText7 中文字体
 │   └── application.yml
-└── sql/                   # 建表脚本
+└── sql/                     # 建表脚本
 ```
 
 ---
 
 ## 可扩展方向
 
-- **向量检索**：题库规模增大后引入 ElasticSearch dense_vector 或 Milvus 替代内存遍历
-- **消息幂等**：MQ 消费端加 Redis SETNX 防止重复评分
-- **死信队列**：评分失败消息进入死信队列兜底，避免静默丢失
-- **本地缓存**：Caffeine 做 L1 缓存减少 Redis 网络开销
 - **限流**：大模型 API 调用加令牌桶限流，防止 QPS 超限
+- **多轮面试回顾**：支持面试过程回放，查看完整对话时间线
