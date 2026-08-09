@@ -256,7 +256,7 @@ public class SysQuestionServiceImpl extends ServiceImpl<SysQuestionMapper, SysQu
     /**
      * 为指定题目列表生成向量（导入流程调用）
      */
-    @Override
+
     public void batchGenerateEmbeddingForQuestions(List<SysQuestion> questions) {
         if (questions == null || questions.isEmpty()) {
             return;

@@ -61,8 +61,10 @@ public class MvcConfig implements WebMvcConfigurer {
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/**")
                 .allowedOriginPatterns("*") // 允许任何来源，最省事
-                .allowedMethods("*")
+               // .allowedMethods("*")
+                .allowedMethods("GET","POST","PUT","DELETE","OPTIONS","PATCH")
                 .allowedHeaders("*")
+                .maxAge(300000)
                 .allowCredentials(true);
     }
 

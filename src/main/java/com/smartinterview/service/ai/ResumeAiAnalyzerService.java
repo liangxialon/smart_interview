@@ -20,9 +20,5 @@ public interface ResumeAiAnalyzerService {
     @SystemMessage(fromResource = "prompts/resume-analysis-system.st")
     TokenStream streamAnalyzeResume(@UserMessage String resumeText);
 
-    /**
-     * 简历评分 （返回 JSON）
-     */
-    @SystemMessage(fromResource = "prompts/resume-score-system.st")
-    String analyzeResumeScore(@UserMessage String resumeText);
+
 }

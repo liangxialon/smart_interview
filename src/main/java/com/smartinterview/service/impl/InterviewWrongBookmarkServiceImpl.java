@@ -72,6 +72,7 @@ public class InterviewWrongBookmarkServiceImpl extends ServiceImpl<InterviewWron
         }
 
         // 2. 批量查询关联的报告记录
+        //查询所有收藏中该次面试收藏的问题。
         List<Long> reportIds = bookmarks.stream()
                 .map(InterviewWrongBookmark::getQuestionReportId)
                 .collect(Collectors.toList());
@@ -111,6 +112,7 @@ public class InterviewWrongBookmarkServiceImpl extends ServiceImpl<InterviewWron
         return result;
     }
 
+    //查询用户收藏的题目报告id.
     @Override
     public Set<Long> getBookmarkedReportIds(List<Long> questionReportIds) {
         if (questionReportIds == null || questionReportIds.isEmpty()) {

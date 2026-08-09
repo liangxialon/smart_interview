@@ -16,13 +16,14 @@ import java.nio.charset.StandardCharsets;
 @Slf4j
 @Component
 public class PromptManager {
+    //该文件构建的提示词不再被使用，直接在AiService里面调用
 
     // 注入 resources/prompts 下的文件
     @Value("classpath:prompts/resume-analysis-system.st")
     private Resource resumeAnalysisResource;
 
-    @Value("classpath:prompts/resume-score-system.st")
-    private Resource resumeScoreResource;
+   // @Value("classpath:prompts/resume-score-system.st")
+   // private Resource resumeScoreResource;
     @Value("classpath:prompts/evaluate-answer.st")
     private Resource evaluateAnswerResource;
 
@@ -38,7 +39,7 @@ public class PromptManager {
         try {
             //将文件输入流读取成字符串，指定UTF-8编码
             resumeAnalysisTemplate = IoUtil.read(resumeAnalysisResource.getInputStream(), StandardCharsets.UTF_8);
-            resumeScoreTemplate    = IoUtil.read(resumeScoreResource.getInputStream(), StandardCharsets.UTF_8);
+           // resumeScoreTemplate    = IoUtil.read(resumeScoreResource.getInputStream(), StandardCharsets.UTF_8);
             evaluateAnswerTemplate=IoUtil.read(evaluateAnswerResource.getInputStream(),StandardCharsets.UTF_8);
             log.info("AI Prompt 模板加载完成！");
         } catch (Exception e) {
@@ -56,6 +57,7 @@ public class PromptManager {
         return resumeScoreTemplate;
     }
 
+    //升级了，不用该评分提示词了
     public String buildEvaluationPrompt(String aiQuestion,String userAnswer,String standardAnswer){
         String userAnswerFinal = StrUtil.isNotBlank(userAnswer) ? userAnswer : "（候选人未作答）";
         String stdAnswerFinal=StrUtil.isNotBlank(standardAnswer)?standardAnswer:"（无标准答案，请依据业界最佳实践评判）";

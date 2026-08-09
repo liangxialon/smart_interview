@@ -16,6 +16,6 @@ public interface SysQuestionService extends IService<SysQuestion> {
 
      String searchStanderAnswer(String userMessage);
      void syncToEsBatch(List<SysQuestion> questions) ;
-     void batchGenerateEmbeddingForQuestions(List<SysQuestion> questions);
+     void batchGenerateEmbedding();
      PageResult pageQuery(Integer page, Integer pageSize, String category, String question, Integer difficulty);
 }

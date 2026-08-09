@@ -13,7 +13,9 @@ import java.io.IOException;
 
 @Component
 public class AdminInterceptor implements HandlerInterceptor {
+
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws IOException {
+        //System.out.println("========");
         if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
             return true;
         }

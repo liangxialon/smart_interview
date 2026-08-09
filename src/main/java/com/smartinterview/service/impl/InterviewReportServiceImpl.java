@@ -117,7 +117,7 @@ public class InterviewReportServiceImpl extends ServiceImpl<InterviewReportMappe
             interviewSessionMapper.updateById(session);
         }
 
-        // 查询收藏状态
+        // 查询收藏的题目报告id状态
         List<Long> reportIds = list.stream().map(InterviewReport::getId).collect(Collectors.toList());
         Set<Long> bookmarkedIds = bookmarkService.getBookmarkedReportIds(reportIds);
 
@@ -376,6 +376,7 @@ public class InterviewReportServiceImpl extends ServiceImpl<InterviewReportMappe
         LambdaQueryWrapper<InterviewWeaknessTraining> cacheWrapper = new LambdaQueryWrapper<>();
         cacheWrapper.eq(InterviewWeaknessTraining::getSessionId, sessionId)
                 .last("LIMIT 1");
+        //如果已经生成训练的话直接查数据库返回
         InterviewWeaknessTraining cached = weaknessTrainingMapper.selectOne(cacheWrapper);
         if (cached != null) {
             log.info("薄弱项训练命中缓存，sessionId={}", sessionId);

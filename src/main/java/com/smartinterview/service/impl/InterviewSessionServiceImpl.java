@@ -152,7 +152,7 @@ public class InterviewSessionServiceImpl extends ServiceImpl<InterviewSessionMap
         // 3a. 从 Redis 历史中提取上一轮 AI 问题，检索标准答案（用于评分）
         List<Message> history = chatContextManager.getHistoryFromRedis(sessionId);
       final  String lastAiQuestion;
-      final  String standardAnswer;
+      final  String standardAnswer;//用于评分
         if (!history.isEmpty()) {
             Message lastMsg = history.get(history.size() - 1);
             if (Role.ASSISTANT.getValue().equals(lastMsg.getRole())) {
@@ -168,6 +168,7 @@ public class InterviewSessionServiceImpl extends ServiceImpl<InterviewSessionMap
         }
 
         // 3b. 简历 RAG：根据面试阶段构造不同检索 Query
+        //面试阶段不同，简历切片提示词不同，系统phase面试提示词也不同。
         String userMessage = dto.getUserMessage();
         String resumeChunks = searchResumeChunksByPhase(userId, phase, userMessage, session.getJobIntention());
 
@@ -220,7 +221,7 @@ public class InterviewSessionServiceImpl extends ServiceImpl<InterviewSessionMap
                 ? "【面试即将结束】请对候选人说：本次面试到此结束，感谢你的参与。后续我们会综合本次面试作答情况进行评估，祝你一切顺利！注意：在回复的最后，请在新的一行输出标记 [INTERVIEW_END]"
                 : phase.getPhasePrompt();
         StringBuilder aiResponseBuffer = new StringBuilder();
-        //todo
+
         interviewChatService.chat(
                 sessionId,
                 userMessage,        //用户消息
